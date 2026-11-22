@@ -1,0 +1,10 @@
+IQD2RAD includes adapted Qwen3-VL-Embedding model and preprocessing code from
+https://github.com/QwenLM/Qwen3-VL-Embedding
+Copyright Tongyi Lab, Alibaba Group, licensed under the Apache License 2.0.
+The upstream license and copyright notice are preserved in LICENSE.
+
+The Qwen integration has been adapted for explicit base/adapter loading,
+public manifest inputs, differentiable encoding, and fail-fast preprocessing.
+The IQD analysis and RAD training components accompany the paper
+"From Intrinsic Quantization Difficulty to Ranking-Aware Distillation for
+Low-Bit Multimodal Retrieval" by Leiyue Chen and Hao Chen.

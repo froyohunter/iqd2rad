@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "Please cite the accompanying paper, accepted at TMLR, when using this software. BibTeX will be added once the final camera-ready citation metadata is available."
+title: "IQD2RAD: Intrinsic Quantization Difficulty and Ranking-Aware Distillation"
+type: software
+version: 0.1.0
+license: Apache-2.0
+repository-code: "https://github.com/froyohunter/iqd2rad"
+authors:
+  - family-names: Chen
+    given-names: Leiyue
+  - family-names: Chen
+    given-names: Hao

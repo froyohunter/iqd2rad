@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "iqd2rad"
+version = "0.1.0"
+description = "Intrinsic Quantization Difficulty analysis and Ranking-Aware Distillation for multimodal retrieval"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = "Apache-2.0"
+dependencies = ["numpy>=1.26,<2", "scipy>=1.11,<2"]
+
+[project.optional-dependencies]
+analysis = ["matplotlib>=3.8,<4"]
+train = [
+  "torch==2.7.1", "torchvision==0.22.1", "transformers==4.57.1",
+  "qwen-vl-utils==0.0.14", "peft==0.17.1", "accelerate>=1.0,<2",
+  "Pillow>=10,<12", "safetensors>=0.5,<1", "av>=14,<17",
+]
+wandb = ["wandb>=0.19,<1"]
+dev = ["pytest>=8.3,<9", "ruff>=0.11,<1"]
+
+[project.scripts]
+iqd2rad-iqd = "iqd2rad.analysis.cli:main"
+iqd2rad-train = "iqd2rad.training.cli:main"
+iqd2rad-data = "iqd2rad.data.cli:main"
+iqd2rad-evaluate = "iqd2rad.evaluation.cli:main"
+iqd2rad-encode = "iqd2rad.models.encode:main"
+
+[project.urls]
+Repository = "https://github.com/froyohunter/iqd2rad"
+Paper = "https://openreview.net/forum?id=4h8YJsubM1"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/iqd2rad"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/configs", "/docs", "/examples", "/tests", "/README.md",
+           "/LICENSE", "/NOTICE", "/CITATION.cff", "/pyproject.toml", "/uv.lock"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]

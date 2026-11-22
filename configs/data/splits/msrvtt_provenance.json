@@ -1,0 +1,19 @@
+{
+  "dataset": "MSR-VTT",
+  "protocol": "7,010 training videos / JSFusion 1,000-video test",
+  "source": {
+    "policy": "official_raw_split",
+    "train_url": "https://huggingface.co/datasets/VLM2Vec/MSR-VTT/resolve/main/raw_data/MSRVTT_train.7k.csv",
+    "test_url": "https://huggingface.co/datasets/VLM2Vec/MSR-VTT/resolve/main/raw_data/MSRVTT_JSFUSION_test.csv"
+  },
+  "files": {
+    "msrvtt_train_ids.txt": {
+      "count": 7010,
+      "sha256": "eab8ce5e410bb2b32255d77ca00575ad2e060b05bd980123cd251044c378274b"
+    },
+    "msrvtt_test_ids.txt": {
+      "count": 1000,
+      "sha256": "64462f74c95235d602a0a231e7f2125640ebbf3de0e226fbdd5e64f621c46d83"
+    }
+  }
+}

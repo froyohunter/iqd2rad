@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "name": "CLIP MSR-VTT main IQD grid",
+  "backbone": "openai/clip-vit-base-patch32",
+  "dataset": "MSR-VTT",
+  "native_dimension": 512,
+  "expected_query_count": 1000,
+  "dims": [128, 256, 512],
+  "bits": [1, 2, 4, 8, 16],
+  "k": 10,
+  "symmetric": false,
+  "quantization": "iqd_fixed_symmetric_grid",
+  "ground_truth": "Explicit correct_indices for the paired MSR-VTT test pool",
+  "expected_cells": 15,
+  "encoding_provenance_status": "unverified",
+  "encoding_protocol": "The paper describes frame-level CLIP video scores without temporal mean pooling.",
+  "note": "Do not treat a mean-pooled CLIP video export as a reproduction of the paper's IQD cells. The original export provenance still requires verification."
+}

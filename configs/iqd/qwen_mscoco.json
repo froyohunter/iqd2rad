@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "Qwen MSCOCO main IQD heatmap grid",
+  "backbone": "Qwen/Qwen3-VL-Embedding-2B",
+  "dataset": "MSCOCO_t2i",
+  "native_dimension": 2048,
+  "expected_query_count": 1000,
+  "dims": [128, 256, 512, 1024],
+  "bits": [1, 2, 4, 8, 16],
+  "k": 10,
+  "symmetric": false,
+  "quantization": "iqd_fixed_symmetric_grid",
+  "ground_truth": "Explicit label-matched correct_indices into the deduplicated image gallery; not diagonal",
+  "expected_cells": 20,
+  "note": "The main 70-cell heatmap uses these four dimensions. The appendix mean-correlation table instead uses dims 128,256,512,1024,2048 and bits 1,2,4,8. No native dimension is appended automatically."
+}

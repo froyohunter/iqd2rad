@@ -1,0 +1,9 @@
+{
+  "dataset": "didemo",
+  "annotations": "metadata/didemo_test_data.json",
+  "mode": "retrieval",
+  "caption_mode": "paragraph",
+  "num_frames": 64,
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/didemo_test"
+}

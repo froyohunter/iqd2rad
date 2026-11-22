@@ -1,0 +1,9 @@
+{
+  "dataset": "activitynet",
+  "annotations": "metadata/val_2.json",
+  "mode": "retrieval",
+  "caption_mode": "paragraph",
+  "num_frames": 32,
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/activitynet_test"
+}

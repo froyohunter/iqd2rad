@@ -1,0 +1,10 @@
+{
+  "dataset": "mscoco",
+  "annotations": "metadata/dataset_coco.json",
+  "split": "test",
+  "mode": "retrieval",
+  "caption_mode": "first",
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/mscoco_5k",
+  "query_instruction": "Find an image that best matches the description."
+}

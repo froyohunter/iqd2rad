@@ -1,0 +1,10 @@
+{
+  "dataset": "mscoco",
+  "annotations": "metadata/dataset_coco.json",
+  "split": "train",
+  "include_restval": true,
+  "mode": "train",
+  "caption_mode": "first",
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/mscoco_train"
+}

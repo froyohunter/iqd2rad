@@ -1,0 +1,9 @@
+{
+  "dataset": "flickr30k",
+  "annotations": "metadata/dataset_flickr30k.json",
+  "split": "train",
+  "mode": "train",
+  "caption_mode": "first",
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/flickr30k_train"
+}

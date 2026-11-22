@@ -1,0 +1,21 @@
+{
+  "embeddings": "outputs/embeddings/flickr30k_test.npz",
+  "output": "outputs/evaluation/flickr30k_test.json",
+  "dims": [
+    128,
+    256,
+    512,
+    1024,
+    2048
+  ],
+  "backends": [
+    "float",
+    "sign",
+    "sq2",
+    "sq4",
+    "sq8"
+  ],
+  "batch_size": 256,
+  "bootstrap": 0,
+  "seed": 42
+}

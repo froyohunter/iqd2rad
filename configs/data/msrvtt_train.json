@@ -1,0 +1,11 @@
+{
+  "dataset": "msrvtt",
+  "annotations": "metadata/MSRVTT_train.7k.csv",
+  "mode": "train",
+  "caption_mode": "first",
+  "split_ids": "configs/data/splits/msrvtt_train_ids.txt",
+  "exclude_ids": "configs/data/splits/msrvtt_test_ids.txt",
+  "num_frames": 64,
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/msrvtt_train"
+}

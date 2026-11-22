@@ -1,0 +1,49 @@
+# Local environments and credentials
+.venv/
+.venv-*/
+venv/
+.env
+.env.*
+!.env.example
+*cookies*.txt
+*.pem
+*.key
+.DS_Store
+
+# Python build and cache files
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Local data, weights, and generated experiment outputs
+data/raw/
+data/processed/
+data/prepared/
+metadata/
+checkpoints/
+outputs/
+artifacts/
+logs/
+wandb/
+.cache/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+pytorch_model*.bin
+adapter_model.bin
+
+# Local editor and agent state
+.idea/
+.vscode/
+.claude/
+.cursor/
+
+# Project page is maintained separately from the code release
+/webpage/

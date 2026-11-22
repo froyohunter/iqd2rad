@@ -1,0 +1,21 @@
+{
+  "embeddings": "outputs/embeddings/mscoco_5k.npz",
+  "output": "outputs/evaluation/mscoco_5k.json",
+  "dims": [
+    128,
+    256,
+    512,
+    1024,
+    2048
+  ],
+  "backends": [
+    "float",
+    "sign",
+    "sq2",
+    "sq4",
+    "sq8"
+  ],
+  "batch_size": 256,
+  "bootstrap": 0,
+  "seed": 42
+}

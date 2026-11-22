@@ -1,0 +1,12 @@
+{
+  "dataset": "flickr30k",
+  "annotations": "metadata/anymodal_flickr30k_test.jsonl",
+  "annotation_format": "anymodal-flickr30k",
+  "split": "test",
+  "mode": "retrieval",
+  "caption_mode": "first",
+  "expected_queries": 1000,
+  "expected_candidates": 1000,
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/flickr30k_test"
+}

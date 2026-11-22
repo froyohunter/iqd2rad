@@ -1,0 +1,8 @@
+{
+  "dataset": "visualnews",
+  "annotations": "metadata/visualnews_mmeb_test.jsonl",
+  "mode": "retrieval",
+  "annotation_format": "mmeb",
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/visualnews_test"
+}

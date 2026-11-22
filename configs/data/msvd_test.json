@@ -1,0 +1,9 @@
+{
+  "dataset": "msvd",
+  "annotations": "metadata/msvd_test_captions.json",
+  "mode": "retrieval",
+  "caption_mode": "first",
+  "num_frames": 64,
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/msvd_test"
+}

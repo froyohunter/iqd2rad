@@ -1,0 +1,9 @@
+{
+  "dataset": "activitynet",
+  "annotations": "metadata/train.json",
+  "mode": "train",
+  "caption_mode": "paragraph",
+  "num_frames": 32,
+  "raw_root": "data/raw",
+  "output_dir": "data/prepared/activitynet_train"
+}

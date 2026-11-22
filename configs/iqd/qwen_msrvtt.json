@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "Qwen MSR-VTT main IQD grid",
+  "backbone": "Qwen/Qwen3-VL-Embedding-2B",
+  "dataset": "MSR-VTT",
+  "native_dimension": 2048,
+  "expected_query_count": 1000,
+  "dims": [128, 256, 512, 2048],
+  "bits": [1, 2, 4, 8, 16],
+  "k": 10,
+  "symmetric": false,
+  "quantization": "iqd_fixed_symmetric_grid",
+  "ground_truth": "Explicit correct_indices for the paired MSR-VTT test pool",
+  "expected_cells": 20,
+  "note": "16-bit is a near-float quantized control, not the unquantized float reference."
+}
