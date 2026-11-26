@@ -19,7 +19,7 @@ def main(argv=None):
     prepare.add_argument("--raw-root")
     prepare.add_argument("--output-dir")
     prepare.add_argument("--split")
-    prepare.add_argument("--annotation-format", choices=["auto", "native", "mmeb", "anymodal-flickr30k"])
+    prepare.add_argument("--annotation-format", choices=["auto", "native", "mmeb", "anymodal-flickr30k", "coco-captions"])
     prepare.add_argument("--mode", choices=["train", "retrieval"])
     prepare.add_argument("--caption-mode", choices=["auto", "all", "first", "paragraph"])
     prepare.add_argument("--query-instruction", help="Explicit retrieval instruction for native annotations")

@@ -52,6 +52,79 @@ def test_official_coco_annotation_join_handles_nondiagonal_ids(tmp_path):
     assert validate_retrieval(queries[::-1], candidates, root) == [[1], [0]]
 
 
+def test_coco_training_recipe_preserves_first_annotation_order(tmp_path):
+    recipe = json.loads((Path(__file__).parents[1] / "configs/data/mscoco_train.json").read_text())
+    assert recipe["expected_queries"] == recipe["expected_candidates"] == 82783
+    assert recipe["include_restval"] is False
+    root = media(tmp_path, "a.jpg", "b.jpg")
+    path = annotation(tmp_path, {
+        "images": [{"id": 9, "file_name": "b.jpg"}, {"id": 0, "file_name": "a.jpg"}],
+        "annotations": [{"id": 3, "image_id": 0, "caption": "First A"},
+                        {"id": 2, "image_id": 9, "caption": "First B"},
+                        {"id": 1, "image_id": 0, "caption": "Unused A"}]})
+    recipe.update(annotations=path, raw_root=root, output_dir=tmp_path / "train",
+                  expected_queries=2, expected_candidates=2)
+    result = prepare_dataset(**recipe)
+    rows = load_jsonl(tmp_path / "train/train.jsonl")
+    assert [(r["image"], r["text"]) for r in rows] == [("a.jpg", "First A"), ("b.jpg", "First B")]
+    assert result["annotation_format"] == "coco-captions"
+    recipe.update(output_dir=tmp_path / "wrong-count", expected_candidates=82783)
+    with pytest.raises(ValueError, match="Expected 82783 candidates"):
+        prepare_dataset(**recipe)
+
+
+def test_coco_training_format_rejects_karpathy_substitution(tmp_path):
+    root = media(tmp_path, "a.jpg")
+    path = annotation(tmp_path, {"images": [{"id": 0, "filename": "a.jpg",
+                                           "sentences": ["Karpathy caption"]}]})
+    with pytest.raises(ValueError, match="images and annotations arrays"):
+        prepare_dataset("mscoco", path, root, tmp_path / "out", annotation_format="coco-captions",
+                        mode="train", caption_mode="first")
+
+
+def test_training_frame_order_and_linspace_match_recorded_loader(tmp_path):
+    paths = [f"frames/video0/frame_{i:03d}.jpg" for i in range(154)]
+    root = media(tmp_path, *paths)
+    ann = annotation(tmp_path, [{"video_id": "video0", "caption": "A video"}])
+    prepare_dataset("msrvtt", ann, root, tmp_path / "out", mode="train", caption_mode="first")
+    frames = load_jsonl(tmp_path / "out/train.jsonl")[0]["frames"]
+    assert len(frames) == 64
+    assert [frames[i] for i in (21, 42, 49)] == [paths[i] for i in (50, 101, 118)]
+    assert frames[0] == paths[0] and frames[-1] == paths[-1]
+
+
+def test_frame_directory_uses_lexicographic_order_and_single_frame_is_first(tmp_path):
+    root = media(tmp_path, "frames/v/frame1.jpg", "frames/v/frame2.jpg", "frames/v/frame10.jpg")
+    ann = annotation(tmp_path, [{"video_id": "v", "caption": "A video"}])
+    prepare_dataset("msrvtt", ann, root, tmp_path / "all", mode="train", caption_mode="first")
+    assert load_jsonl(tmp_path / "all/train.jsonl")[0]["frames"] == [
+        "frames/v/frame1.jpg", "frames/v/frame10.jpg", "frames/v/frame2.jpg"]
+    prepare_dataset("msrvtt", ann, root, tmp_path / "one", mode="train", caption_mode="first", num_frames=1)
+    assert load_jsonl(tmp_path / "one/train.jsonl")[0]["frames"] == ["frames/v/frame1.jpg"]
+
+
+def test_frame_extractor_passes_reference_indices_to_decoder(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from iqd2rad.data import frames as module
+
+    video = tmp_path / "video.mp4"
+    video.touch()
+    monkeypatch.setattr(module.shutil, "which", lambda name: name)
+
+    def run(command, **kwargs):
+        if command[0] == "ffprobe":
+            return SimpleNamespace(stdout='{"streams":[{"nb_read_frames":"154"}]}')
+        selection = command[command.index("-vf") + 1]
+        assert "eq(n\\,50)" in selection and "eq(n\\,51)" not in selection
+        assert "eq(n\\,101)" in selection and "eq(n\\,118)" in selection
+        for index in range(64):
+            Path(command[-1] % index).write_bytes(b"frame")
+        return SimpleNamespace()
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    assert len(module.extract_frames(video, tmp_path / "frames", 64)) == 64
+
+
 def test_mmeb_preserves_full_gallery_and_positive_identity_without_caption_leakage(tmp_path):
     root = media(tmp_path, "a.jpg", "b.jpg", "negative.jpg")
     path = annotation(tmp_path, [

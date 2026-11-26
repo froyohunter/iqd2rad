@@ -1,10 +1,13 @@
 {
   "dataset": "mscoco",
-  "annotations": "metadata/dataset_coco.json",
+  "annotations": "metadata/captions_train2014.json",
+  "annotation_format": "coco-captions",
   "split": "train",
-  "include_restval": true,
+  "include_restval": false,
   "mode": "train",
   "caption_mode": "first",
-  "raw_root": "data/raw",
+  "raw_root": "data/raw/mscoco/train2014",
+  "expected_queries": 82783,
+  "expected_candidates": 82783,
   "output_dir": "data/prepared/mscoco_train"
 }

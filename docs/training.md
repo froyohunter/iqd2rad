@@ -25,15 +25,35 @@ saved training configurations.
 The effective batch is obtained by gradient accumulation:
 `128 / (8 × world_size)`. It must be an integer. For example, eight GPUs use
 two microbatches per optimizer update. **The contrastive negative pool remains
-the local microbatch of eight pairs:** neither gradient accumulation nor DDP
-adds cross-device negatives. A different per-device batch size changes the
-training objective even when effective batch size stays 128.
+the local microbatch:** normally eight pairs, with smaller retained batches at
+an epoch boundary. Neither gradient accumulation nor DDP adds cross-device
+negatives. A different per-device batch size changes the training objective
+even when effective batch size stays 128.
 
 The historical main runs and the 8-bit control used **16 GPUs (two nodes of
 eight), with one microbatch per optimizer update**. The eight-GPU examples
 below use accumulation of two and are portable launch examples, not a claim
 of an identical stochastic training trajectory. Use matching world size,
 seeds, manifests and model revision when comparing to the recorded runs.
+
+The distributed sampler uses seed 0, shuffles each epoch, and pads the sample
+list to equal rank lengths. Both the sampler and loader retain the final batch.
+For 7,010 video pairs on 16 GPUs this gives 55 batches per rank, ending with
+seven pairs; for 82,783 image pairs it gives 647 batches, ending with six.
+These tails also make the actual last-step batch smaller than the nominal 128.
+A singleton tail is rejected explicitly because the contrastive/weighting
+interface requires at least two pairs; it is never silently dropped.
+
+Python, NumPy and Torch are seeded once with `seed + rank` before model and
+LoRA initialization. DDP broadcasts the rank-zero parameters. The RNG is not
+reset after initialization, and the loader has no separate random generator.
+Training uses the loaded model/adapter dtypes directly, without wrapping the
+forward and loss in autocast or adding gradient scaling. Scalar InfoNCE
+reductions and sequential sums across bits retain the source operation order,
+which matters for BF16 rounding.
+Disabled terms retain the source scalar dtypes: the c arm's zero distillation
+term and the 8-bit-only control's zero consistency term promote the total
+loss to FP32. They do not add an objective or change the embedding dtype.
 
 ## Optional 8-bit-only image control
 
@@ -42,7 +62,10 @@ and RAD arms with only the 8-bit branch. The loss, temperatures, LoRA setup,
 batch sizes, learning rate and warmup schedule are unchanged from the
 corresponding image d/e recipe. Only `bit_levels: [8]` changes the objective;
 the runtime option `gradient_checkpointing: true` matches the recorded
-control launch. The main 12 configs retain their original setting.
+control launch. This uses the model's default reentrant checkpointing and
+DDP static-graph mode. Static-graph accumulation synchronizes each microbatch;
+without checkpointing, non-final accumulated microbatches use `no_sync`.
+The main 12 configs retain their original setting.
 
 These controls have separate output directories. They train only the 8-bit
 branch, although the resulting embeddings may still be evaluated at other
@@ -138,7 +161,16 @@ packages, terminates other jobs, or relies on an internal scheduler.
 
 Optional W&B logging uses the public client. Install `.[wandb]`, configure
 authentication through the standard client, and set `wandb_project` in your
-JSON config. Logging is disabled by default.
+JSON config. Logging is disabled by default. W&B records every optimizer step
+under `train/`, independently of the console `log_every` interval. Records
+include per-bit losses, the weighted contrastive/distillation terms, learning
+rate and global step. `train/distill_weight` preserves the original logging
+point after the step counter advances, so during warmup it reports the
+next-step coefficient; `train/loss_term_distill_term` records the contribution
+actually used for the completed step. The bit-depth consistency contribution
+is always zero and is logged as zero; no extra consistency objective is run.
+Its unused, unweighted diagnostic is not recomputed or logged. Arm b retains
+the float-only `loss`, `unweighted_loss`, and zero `iqd_mean`/`iqd_std` fields.
 
 ## Loss details that affect reproduction
 
@@ -163,14 +195,29 @@ SorterHead, EMA teacher, or bit-depth consistency loss is used.
 
 ## Saved artifacts
 
-Every 500 steps and at `output_dir/final`, the launcher exports the LoRA
-adapter and processor/tokenizer using safetensors. It writes the experimental
+With `save_every: 500`, periodic exports occur at completed optimizer steps
+501, 1001, 1501, 2001, 2501 and 3001, preserving the original zero-based loop
+check. A separate `output_dir/final` export follows the last step. The launcher
+exports the LoRA adapter and processor/tokenizer using safetensors. It writes the experimental
 configuration to `training_config.json`, leaving model configuration filenames
 to the model/processor libraries. `metadata.json` records the requested and
 resolved base revision, manifest SHA-256, arm, modality, optimizer step,
 world size, accumulation count, package versions, and visual-caption flag.
+`training_info.json` retains the original statistics fields: sample/batch and
+validation counts, world size, nominal effective and per-device batch sizes,
+accumulation steps, current learning rate, optimizer step and final-export flag.
+The configuration uses the public flat schema in `training_config.json`; the
+original nested research `config.json` is not copied over a model config.
 
 These are inference exports, not optimizer-resume checkpoints. Optimizer and
 scheduler state are not exported. Existing nonempty output directories are
 rejected to prevent a run from mixing with old artifacts. No Qwen GPU run is
 claimed solely from the CPU loss and orchestration tests.
+
+The DDP wrapper contains both modality forwards in one `PairEncoder` call.
+This differs from calling the DDP-wrapped inner backbone twice in the original runner;
+two-process CPU/Gloo checks compare its averaged gradients with the same local
+losses, including accumulation and reentrant checkpointing. Those checks do
+not establish bitwise equivalence for the full CUDA/NCCL model. Worker count
+is configurable and defaults to zero for portable loading. Missing/corrupt
+media and non-finite losses fail explicitly instead of being silently replaced.

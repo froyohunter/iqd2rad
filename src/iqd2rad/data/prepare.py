@@ -3,9 +3,10 @@
 import csv
 import hashlib
 import json
-import re
 from collections import OrderedDict
 from pathlib import Path
+
+import numpy as np
 
 from .manifests import (check_disjoint, load_ids, load_jsonl, relative_path,
                         validate_retrieval, write_jsonl)
@@ -138,6 +139,29 @@ def _anymodal_flickr_records(payload):
     return _image_records(converted)
 
 
+def _coco_training_records(payload):
+    """One caption per image, in first-annotation order used by the image runs."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("images"), list) \
+            or not isinstance(payload.get("annotations"), list):
+        raise ValueError("coco-captions training requires COCO images and annotations arrays")
+    images = {str(row["id"]): row["file_name"] for row in payload["images"]}
+    seen, records = set(), []
+    for annotation in payload["annotations"]:
+        media_id = str(annotation["image_id"])
+        if media_id in seen:
+            continue
+        seen.add(media_id)
+        if media_id not in images:
+            raise ValueError(f"COCO annotation references absent image {media_id}")
+        caption = annotation["caption"]
+        if not isinstance(caption, str) or not caption.strip():
+            raise ValueError(f"COCO image {media_id} has no nonempty caption")
+        records.append({"id": media_id, "image": relative_path(images[media_id]),
+                        "captions": [{"key": str(annotation["id"]), "text": caption}],
+                        "split": None})
+    return records
+
+
 def _video_records(payload, dataset):
     """MSR-VTT sentences, MSVD captions/CSV, DiDeMo descriptions, ActivityNet JSON."""
     videos = {}
@@ -194,10 +218,6 @@ def _video_records(payload, dataset):
     return list(grouped.values())
 
 
-def _natural_key(path):
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(path))]
-
-
 def _media(record, root, frames_subdir, num_frames, media_map):
     media_id = record["id"]
     override = media_map.get(media_id, {})
@@ -217,13 +237,13 @@ def _media(record, root, frames_subdir, num_frames, media_map):
         if frame_dir is None:
             frame_dir = str(Path(frames_subdir) / media_id)
         folder = root / relative_path(frame_dir)
-        frames = [str(path.relative_to(root)) for path in sorted(folder.glob("*"), key=_natural_key)
-                  if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}]
+        frames = [str(path.relative_to(root)) for path in sorted(folder.glob("*"))
+                  if path.is_file() and path.suffix.lower() in
+                  {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}]
         if not frames:
             raise FileNotFoundError(f"No frames for video {media_id}; prepare frames or supply media_map")
     if len(frames) > num_frames:
-        positions = [int(index * (len(frames) - 1) / (num_frames - 1)) for index in range(num_frames)] \
-            if num_frames > 1 else [len(frames) // 2]
+        positions = np.linspace(0, len(frames) - 1, num_frames, dtype=int)
         frames = [frames[index] for index in positions]
     return {"id": media_id, "frames": frames}
 
@@ -309,10 +329,13 @@ def prepare_dataset(dataset, annotations, raw_root, output_dir, *, split=None,
         raise ValueError(f"Supported datasets: {', '.join(DATASETS)}")
     if mode not in {"retrieval", "train"} or caption_mode not in {"auto", "all", "first", "paragraph"}:
         raise ValueError("Invalid mode or caption_mode")
-    if annotation_format not in {"auto", "native", "mmeb", "anymodal-flickr30k"}:
+    if annotation_format not in {"auto", "native", "mmeb", "anymodal-flickr30k", "coco-captions"}:
         raise ValueError("Unsupported annotation_format")
     if annotation_format == "anymodal-flickr30k" and dataset != "flickr30k":
         raise ValueError("anymodal-flickr30k format is specific to Flickr30k")
+    if annotation_format == "coco-captions" and (dataset != "mscoco" or mode != "train"
+                                                or caption_mode != "first" or include_restval):
+        raise ValueError("coco-captions requires MSCOCO training, first caption, and no restval")
     if num_frames < 1:
         raise ValueError("num_frames must be positive")
     root, output = Path(raw_root).resolve(), Path(output_dir)
@@ -331,7 +354,9 @@ def prepare_dataset(dataset, annotations, raw_root, output_dir, *, split=None,
         queries, candidates = _mmeb(payload, dataset, root, split, split_ids, exclude_ids)
         used_caption_mode = "metadata-queries"
     else:
-        if annotation_format == "anymodal-flickr30k":
+        if annotation_format == "coco-captions":
+            records = _coco_training_records(payload)
+        elif annotation_format == "anymodal-flickr30k":
             records = _anymodal_flickr_records(payload)
         else:
             records = _video_records(payload, dataset) if dataset in VIDEO_DATASETS else _image_records(payload)
@@ -391,10 +416,13 @@ def prepare_dataset(dataset, annotations, raw_root, output_dir, *, split=None,
     digest = hashlib.sha256(Path(annotations).read_bytes()).hexdigest()
     metadata = {"schema_version": 1, "dataset": dataset, "split": split, "mode": mode,
                 "annotation_format": "mmeb" if is_mmeb else
-                    ("anymodal-flickr30k" if annotation_format == "anymodal-flickr30k" else "native"),
+                    (annotation_format if annotation_format in {"anymodal-flickr30k", "coco-captions"}
+                     else "native"),
                 "annotation_sha256": digest,
                 "queries": len(queries), "candidates": len(candidates),
                 "caption_mode": used_caption_mode, "num_frames_max": num_frames,
+                "frame_directory_order": "lexicographic",
+                "frame_sampling": "numpy.linspace(0, n-1, num_frames, dtype=int)",
                 "include_restval": include_restval, "explicit_split_ids": bool(split_ids),
                 "explicit_query_ids": bool(query_ids), "explicit_candidate_ids": bool(candidate_ids),
                 "query_instruction_override": query_instruction,

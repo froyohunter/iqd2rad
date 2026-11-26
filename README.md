@@ -45,26 +45,29 @@ or start with the [synthetic example below](#try-the-analyzer-without-a-model-or
 
 ## Install
 
-Use Python 3.11 or 3.12 in a separate environment:
+Use Python 3.11 or 3.12 in a separate environment. Install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) (tested with 0.10.4),
+then synchronize from the committed dependency lock:
 
 ```bash
-python3.11 -m venv .venv
+uv sync --locked --python 3.11 --extra analysis --extra dev
 source .venv/bin/activate
-python -m pip install -e '.[analysis,dev]'
 ```
 
 The core analyzer/evaluator need only NumPy and SciPy; plots use the `analysis`
 extra. For Qwen encoding and training, additionally install:
 
 ```bash
-python -m pip install -e '.[train]'
+uv sync --locked --extra analysis --extra dev --extra train
 # Optional public Weights & Biases logging:
-python -m pip install -e '.[wandb]'
+uv sync --locked --extra analysis --extra dev --extra train --extra wandb
 wandb login
 ```
 
-The train extra pins compatible Torch/torchvision/Transformers versions.
-See [training setup](docs/training.md) for CUDA, Flash Attention and SDPA options.
+The lock records the release's direct and transitive package versions.
+See [environment provenance](docs/environment.md) for the relationship to the
+reference checkpoints, and [training setup](docs/training.md) for CUDA,
+Flash Attention and SDPA options.
 W&B logging is enabled by setting `wandb_project` in the training configuration.
 
 ## Try the analyzer without a model or dataset

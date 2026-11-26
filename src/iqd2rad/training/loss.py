@@ -29,6 +29,7 @@ class RankingDistillLoss(nn.Module):
         if arm not in tuple("bcdef"):
             raise ValueError("Arm a is the untrained base model; training arms are b–f")
         self.arm = arm
+        self.temperature = temperature
         self.bit_levels = tuple([2, 4, 8] if bit_levels is None else bit_levels)
         if self.bit_levels not in ((2, 4, 8), (8,)):
             raise ValueError("bit_levels must be [2, 4, 8] or [8]")
@@ -38,6 +39,13 @@ class RankingDistillLoss(nn.Module):
         self.online_diff_zscore = online_diff_zscore
         self.online_diff_clamp = online_diff_clamp
         self.register_buffer("logit_scale", torch.tensor(1.0 / temperature))
+
+    def _infonce(self, visual, text):
+        similarities = F.normalize(visual, dim=-1) @ F.normalize(text, dim=-1).T
+        logits = similarities / max(1e-6, self.temperature) if self.arm == "b" else self.logit_scale * similarities
+        labels = torch.arange(visual.shape[0], device=visual.device)
+        # Keep the source scalar reduction order, including BF16 rounding.
+        return (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2.0
 
     def _per_sample_infonce(self, visual, text):
         logits = self.logit_scale * (F.normalize(visual, dim=-1) @ F.normalize(text, dim=-1).T)
@@ -69,36 +77,51 @@ class RankingDistillLoss(nn.Module):
     def forward(self, visual, text, distill_scale=1.0):
         if visual.shape != text.shape or visual.ndim != 2 or visual.shape[0] < 2:
             raise ValueError("Expected matching visual/text [batch >= 2, dimension] tensors")
-        float_per = self._per_sample_infonce(visual, text)
-        float_loss = float_per.mean()
-        quant_losses, distill_losses = [], []
-        metrics = {"contrastive_float": float_loss.detach()}
+        narrow_visual, narrow_text = {}, {}
         if self.arm != "b":
-            # Preserve the two normalization stages in original _build_narrow_dict.
+            # Preserve the source graph construction and double normalization.
             visual_cont = F.normalize(visual, dim=-1)
+            narrow_visual = {bits: uniform_ste_quantize(visual_cont, bits) for bits in self.bit_levels}
             text_cont = F.normalize(text, dim=-1)
+            narrow_text = {bits: uniform_ste_quantize(text_cont, bits) for bits in self.bit_levels}
+        float_loss = self._infonce(visual, text)
+        if self.arm == "b":
+            return {"loss": float_loss, "iqd_mean": float_loss.detach().new_zeros(()),
+                    "iqd_std": float_loss.detach().new_zeros(()), "unweighted_loss": float_loss.detach()}
+        quant_losses = {bits: self._infonce(narrow_visual[bits], narrow_text[bits])
+                        for bits in self.bit_levels if bits in narrow_visual}
+        quant_loss = sum(quant_losses.values()) / len(quant_losses) if quant_losses else float_loss.new_zeros(())
+        contrastive_loss = float_loss + quant_loss
+        distill_losses, online_diff = {}, {}
+        if self.arm == "d":
             for bits in self.bit_levels:
-                vq = uniform_ste_quantize(visual_cont, bits)
-                tq = uniform_ste_quantize(text_cont, bits)
-                quant_per = self._per_sample_infonce(vq, tq)
-                quant_losses.append(quant_per.mean())
-                metrics[f"quant_{bits}bit"] = quant_per.mean().detach()
-                if self.arm == "d":
-                    # MSE uses RAW float embeddings as teacher, matching source.
-                    per = (F.mse_loss(visual.detach(), vq, reduction="none").mean(-1)
-                           + F.mse_loss(text.detach(), tq, reduction="none").mean(-1)) / 2
-                elif self.arm in ("e", "f"):
-                    per = (self._ranking_kl(visual, vq, text)
-                           + self._ranking_kl(text, tq, visual)) / 2
-                    if self.arm == "f":
-                        per = self._online_weights(float_per, quant_per) * per
-                        metrics[f"online_diff_{bits}bit"] = (quant_per - float_per).mean().detach()
-                else:
-                    continue
-                distill_losses.append(per.mean())
-                metrics[f"distill_{bits}bit"] = per.mean().detach()
-        quant_loss = torch.stack(quant_losses).mean() if quant_losses else float_loss.new_zeros(())
-        distill_loss = torch.stack(distill_losses).mean() if distill_losses else float_loss.new_zeros(())
-        loss = float_loss + quant_loss + self.distill_weight * distill_scale * distill_loss
-        metrics.update(contrastive_quant=quant_loss.detach(), distill=distill_loss.detach(), loss=loss)
+                per = (F.mse_loss(visual.detach(), narrow_visual[bits], reduction="none").mean(-1)
+                       + F.mse_loss(text.detach(), narrow_text[bits], reduction="none").mean(-1)) / 2.0
+                distill_losses[bits] = per.mean()
+        elif self.arm in ("e", "f"):
+            float_per = self._per_sample_infonce(visual, text).detach()
+            for bits in self.bit_levels:
+                per = (self._ranking_kl(visual, narrow_visual[bits], text)
+                       + self._ranking_kl(text, narrow_text[bits], visual)) / 2.0
+                if self.arm == "f":
+                    quant_per = self._per_sample_infonce(narrow_visual[bits], narrow_text[bits]).detach()
+                    per = self._online_weights(float_per, quant_per) * per
+                    online_diff[bits] = (quant_per - float_per).mean().detach()
+                distill_losses[bits] = per.mean()
+        distill_loss = (sum(distill_losses.values()) / len(distill_losses) if distill_losses
+                        else torch.tensor(0.0, device=visual.device))
+        distill_term = (self.distill_weight * distill_scale) * distill_loss
+        # Preserve the disabled auxiliary term's scalar dtype without computing
+        # an additional objective: the source returns an FP32 zero for one bit.
+        auxiliary_zero = (torch.tensor(0.0, device=visual.device) if len(self.bit_levels) == 1
+                          else float_loss.new_zeros(()))
+        loss = contrastive_loss + distill_term + auxiliary_zero
+        metrics = {"contrastive_float": float_loss.detach(), "contrastive_quant": quant_loss.detach(),
+                   "distill": distill_loss.detach(), "loss": loss,
+                   "loss_term_contrastive_term": contrastive_loss.detach(),
+                   "loss_term_distill_term": distill_term.detach(),
+                   "loss_term_matryoshka_term": auxiliary_zero}
+        metrics.update({f"quant_{bits}bit": value.detach() for bits, value in quant_losses.items()})
+        metrics.update({f"distill_{bits}bit": value.detach() for bits, value in distill_losses.items()})
+        metrics.update({f"online_diff_{bits}bit": value for bits, value in online_diff.items()})
         return metrics

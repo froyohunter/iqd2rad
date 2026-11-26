@@ -52,8 +52,10 @@ def test_main_arms_have_finite_loss_and_gradients(arm):
     assert torch.isfinite(visual.grad).all() and visual.grad.norm() > 0
     assert torch.isfinite(text.grad).all() and text.grad.norm() > 0
     if arm == "b":
-        assert metrics["contrastive_quant"] == 0
-    if arm in "bc":
+        assert set(metrics) == {"loss", "iqd_mean", "iqd_std", "unweighted_loss"}
+        assert metrics["iqd_mean"] == metrics["iqd_std"] == 0
+        torch.testing.assert_close(metrics["loss"], metrics["unweighted_loss"])
+    if arm == "c":
         assert metrics["distill"] == 0
 
 
@@ -80,3 +82,48 @@ def test_eight_bit_control_uses_no_lower_bit_branch(arm):
     metrics["loss"].backward()
     assert visual.grad is not None and torch.isfinite(visual.grad).all() and visual.grad.norm() > 0
     assert text.grad is not None and torch.isfinite(text.grad).all() and text.grad.norm() > 0
+
+
+@pytest.mark.parametrize("arm", ["b", "c", "e", "f"])
+def test_scalar_infonce_keeps_reference_bf16_reduction_order(arm):
+    generator = torch.Generator().manual_seed(8)
+    visual = torch.randn(8, 128, dtype=torch.bfloat16, generator=generator, requires_grad=True)
+    text = torch.randn(8, 128, dtype=torch.bfloat16, generator=generator, requires_grad=True)
+    criterion = RankingDistillLoss(arm=arm)
+    similarity = F.normalize(visual, dim=-1) @ F.normalize(text, dim=-1).T
+    logits = similarity / 0.07 if arm == "b" else criterion.logit_scale * similarity
+    labels = torch.arange(8)
+    expected = (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2.0
+    actual = criterion._infonce(visual, text)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    actual_grad = torch.autograd.grad(actual, (visual, text), retain_graph=True)
+    expected_grad = torch.autograd.grad(expected, (visual, text))
+    for value, reference in zip(actual_grad, expected_grad):
+        torch.testing.assert_close(value, reference, rtol=0, atol=0)
+
+
+def test_bf16_bit_losses_use_reference_sequential_sum():
+    generator = torch.Generator().manual_seed(7)
+    visual = torch.randn(8, 128, dtype=torch.bfloat16, generator=generator)
+    text = torch.randn(8, 128, dtype=torch.bfloat16, generator=generator)
+    metrics = RankingDistillLoss(arm="e")(visual, text, distill_scale=0.37)
+    quant = sum(metrics[f"quant_{bits}bit"] for bits in (2, 4, 8)) / 3
+    distill = sum(metrics[f"distill_{bits}bit"] for bits in (2, 4, 8)) / 3
+    torch.testing.assert_close(metrics["contrastive_quant"], quant, rtol=0, atol=0)
+    torch.testing.assert_close(metrics["distill"], distill, rtol=0, atol=0)
+    torch.testing.assert_close(metrics["loss"], metrics["contrastive_float"] + quant + (0.5 * 0.37) * distill,
+                               rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("arm", ["b", "c", "e", "f"])
+@pytest.mark.parametrize("bits", [[2, 4, 8], [8]])
+def test_bf16_total_dtype_matches_disabled_reference_terms(arm, bits):
+    generator = torch.Generator().manual_seed(7)
+    visual = torch.randn(8, 128, dtype=torch.bfloat16, generator=generator, requires_grad=True)
+    text = torch.randn(8, 128, dtype=torch.bfloat16, generator=generator, requires_grad=True)
+    metrics = RankingDistillLoss(arm=arm, bit_levels=bits)(visual, text)
+    expected = torch.float32 if arm == "c" or (arm != "b" and bits == [8]) else torch.bfloat16
+    assert metrics["loss"].dtype == expected
+    metrics["loss"].backward()
+    assert visual.grad.dtype == text.grad.dtype == torch.bfloat16
+    assert torch.isfinite(visual.grad).all() and torch.isfinite(text.grad).all()

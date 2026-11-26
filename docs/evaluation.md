@@ -26,6 +26,18 @@ The preparation and encoder commands resolve `positive_ids` against the gallery
 before producing `correct_indices`. A reordered candidate archive requires
 remapping these indices as well; metadata IDs alone do not repair stale indices.
 
+Encoding defaults to the reference **FlashAttention 2** backend and bf16 on CUDA.
+Install FlashAttention 2 in the training environment before using this path.
+For CPU encoding, select `--device cpu --dtype float32 --attn-implementation sdpa`
+explicitly. SDPA is also available on CUDA; record the selected backend when
+comparing results, since different kernels can introduce numerical differences.
+
+When an adapter includes `preprocessor_config.json`, encoding loads its exported
+processor. A weights-only adapter uses the base processor; `--processor-source`
+can override this selection. The embedding metadata records the processor source,
+requested revision, selection rule, attention backend and dtype. Base and adapter
+revisions should be pinned to the checkpoints being evaluated.
+
 ## Run
 
 ```bash
@@ -87,3 +99,8 @@ reproduction still requires the matching checkpoint, raw embedding export,
 query text, query/gallery IDs, input preprocessing, model revision and bit/dim
 configuration. Standard dataset splits with different caption choices or gallery
 membership are not interchangeable with the released experiment metadata.
+
+Media must be complete and decodable. The portable pipeline reports missing or
+corrupt inputs instead of substituting blank images, removing failed frames or
+encoding placeholder text. Repair such inputs before comparing a run with an
+existing embedding export.

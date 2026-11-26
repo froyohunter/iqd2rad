@@ -6,6 +6,7 @@ pytest.importorskip("transformers")
 peft = pytest.importorskip("peft")
 
 from transformers import Qwen3VLConfig
+from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLModel
 from iqd2rad.models.qwen import Qwen3VLForEmbedding
 
 
@@ -42,3 +43,31 @@ def test_tiny_qwen_adapter_backward_and_reload(tmp_path):
     with torch.no_grad():
         torch.testing.assert_close(model(**inputs).last_hidden_state,
                                    restored(**inputs).last_hidden_state)
+
+
+def test_embedding_wrapper_preserves_backbone_forward_and_gradients():
+    config = Qwen3VLConfig(
+        text_config={"vocab_size": 128, "hidden_size": 32, "intermediate_size": 64,
+                     "num_hidden_layers": 1, "num_attention_heads": 4,
+                     "num_key_value_heads": 2, "head_dim": 8,
+                     "max_position_embeddings": 128,
+                     "rope_scaling": {"rope_type": "default", "mrope_section": [1, 1, 2]}},
+        vision_config={"depth": 1, "hidden_size": 32, "intermediate_size": 64,
+                       "num_heads": 4, "out_hidden_size": 32, "deepstack_visual_indexes": []},
+    )
+    wrapper = Qwen3VLForEmbedding(config).eval()
+    backbone = Qwen3VLModel(config).eval()
+    backbone.load_state_dict(wrapper.model.state_dict(), strict=True)
+    inputs = {"input_ids": torch.tensor([[1, 2, 3], [2, 3, 4]]),
+              "attention_mask": torch.ones(2, 3, dtype=torch.long)}
+    actual = wrapper(**inputs).last_hidden_state
+    expected = backbone(**inputs).last_hidden_state
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    actual.square().mean().backward()
+    expected.square().mean().backward()
+    for name, parameter in wrapper.model.named_parameters():
+        reference = dict(backbone.named_parameters())[name]
+        if parameter.grad is None:
+            assert reference.grad is None
+        else:
+            torch.testing.assert_close(parameter.grad, reference.grad, rtol=0, atol=0)

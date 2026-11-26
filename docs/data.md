@@ -21,12 +21,14 @@ Captions and VisualNews.
   in `configs/data/splits/msrvtt_provenance.json`. The first caption per video
   produces the paired-video protocol; supplying a different caption collection
   is not guaranteed to reproduce the paper's query text.
-- **MSCOCO training:** Karpathy `dataset_coco.json`, with `images` records
-  containing `cocoid`, `filename`, `filepath`, `split` and `sentences` with `raw`
-  text. The train recipe includes `train` and `restval` and takes the first
-  caption per image, matching the one-pair-per-image training loader. Standard
-  COCO captions JSON (`images` + `annotations`, joined through `image_id`) also
-  works; an explicit split ID list is then needed for the intended split.
+- **MSCOCO training:** COCO `captions_train2014.json` (`images` + `annotations`,
+  joined through `image_id`), with `--raw-root` pointing to `train2014/`.
+  The `coco-captions` recipe keeps the first annotation per image and preserves
+  the order in which image IDs first appear in the annotation array. It checks
+  for 82,783 pairs, matching the recorded image run. Karpathy `train+restval`
+  is a different training set and is not selected by this recipe. Karpathy
+  annotations remain supported through the native format for explicit other
+  settings and the supplied 5K evaluation recipe.
 - **MSCOCO 1K-query evaluation:** use the exact public MMEB-style metadata
   export, not a newly sampled 1K Karpathy image subset. Required fields are
   `qry_text` and `tgt_img_path` (a list, positive first); optional `id` and
@@ -84,6 +86,9 @@ Run from the repository root; CLI flags override recipe values.
 iqd2rad-data prepare --config configs/data/msrvtt_train.json \
   --annotations /path/to/MSRVTT_train.7k.csv --raw-root /path/to/media
 
+iqd2rad-data prepare --config configs/data/mscoco_train.json \
+  --annotations /path/to/captions_train2014.json --raw-root /path/to/train2014
+
 iqd2rad-data prepare --config configs/data/mscoco_1k.json \
   --annotations /path/to/mscoco_mmeb_test.jsonl --raw-root /path/to/images
 
@@ -114,6 +119,17 @@ instructions are taken from `qry_inst`; native formats use dataset-specific
 retrieval instructions. `--query-instruction` explicitly overrides either, and
 is recorded in the preparation metadata.
 
+Frame directories use lexicographic filename order, then
+`numpy.linspace(0, n-1, num_frames, dtype=int)` when subsampling, matching the
+training frame loader. Explicit frame lists retain their supplied order.
+
+For comparisons with a recorded run, use the same pre-extracted frame export.
+The optional `extract-frames` helper decodes with FFmpeg and writes JPEGs at
+`q:v=2`, without duplicating frames in videos shorter than the requested count.
+Different decoders, JPEG settings, or short-video duplication policies can change
+the pixels even when sampling positions agree; retain the original extraction
+settings alongside the frame files.
+
 ## Manifest schemas
 
 Training produces `train.jsonl`:
@@ -141,7 +157,7 @@ analyzer requires exactly one positive per query.
 ## Frame preparation
 
 By default videos use `raw_root/frames/<video_id>/`. Existing frame filenames
-are naturally sorted and uniformly subsampled up to the requested maximum;
+are lexicographically sorted and uniformly subsampled up to the requested maximum;
 fewer frames are retained, not duplicated. Main MSR-VTT/MSVD/DiDeMo recipes use
 up to 64 frames; ActivityNet uses 32.
 

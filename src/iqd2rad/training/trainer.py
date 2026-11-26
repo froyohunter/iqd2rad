@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import random
 
+import numpy as np
 import torch
 from torch import nn
 import torch.distributed as dist
@@ -46,6 +47,50 @@ def _lr_multiplier(step, warmup, total):
     return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
 
 
+def _seed_training(seed, rank):
+    """Seed once before model/LoRA initialization; DDP broadcasts rank-zero weights."""
+    effective_seed = seed + rank
+    random.seed(effective_seed)
+    np.random.seed(effective_seed)
+    torch.manual_seed(effective_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(effective_seed)
+
+
+def _training_loader(dataset, config, world_size, rank):
+    # The original DistributedSampler uses its default seed=0 independently of
+    # the model seed, pads to equal rank lengths, and retains the last batch.
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank,
+                                 shuffle=True, seed=0, drop_last=False) if world_size > 1 else None
+    local_samples = len(sampler) if sampler is not None else len(dataset)
+    if local_samples < 2 or local_samples % config.per_device_batch_size == 1:
+        raise ValueError("The retained final microbatch would contain fewer than two pairs; "
+                         "choose a dataset/batch/world-size combination without a singleton tail")
+    loader = DataLoader(dataset, batch_size=config.per_device_batch_size,
+                        shuffle=sampler is None, sampler=sampler, drop_last=False,
+                        num_workers=config.num_workers, collate_fn=collate_pairs,
+                        pin_memory=True, prefetch_factor=4 if config.num_workers > 0 else None,
+                        persistent_workers=config.num_workers > 0)
+    return loader, sampler
+
+
+def _periodic_checkpoint(step, save_every):
+    # Source loop checks zero-based loop index after incrementing global_step.
+    return bool(save_every and step > 1 and (step - 1) % save_every == 0)
+
+
+def _wandb_metrics(metrics, config, step, lr):
+    result = {f"train/{key}": value for key, value in metrics.items()}
+    result.update({"train/lr": lr, "train/global_step": step})
+    if config.arm in "cdef":
+        weight = config.distill_weight if config.arm in "def" else 0.0
+        # Preserve the source logging point: global_step has already advanced,
+        # so this field is the next-step coefficient during warmup.
+        scale = min(1.0, (step + 1) / config.distill_warmup_steps) if config.distill_warmup_steps else 1.0
+        result["train/distill_weight"] = weight * scale
+    return result
+
+
 def _versions():
     result = {}
     for package in ("torch", "transformers", "peft", "qwen-vl-utils", "safetensors"):
@@ -56,7 +101,9 @@ def _versions():
     return result
 
 
-def export_adapter(encoder, config, destination, *, step, world_size, manifest_sha256):
+def export_adapter(encoder, config, destination, *, step, world_size, manifest_sha256,
+                   num_training_samples=None, num_training_batches=None, current_lr=None,
+                   is_final=False):
     """Export inference weights and provenance; never overwrite model config.json."""
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=False)
@@ -65,7 +112,23 @@ def export_adapter(encoder, config, destination, *, step, world_size, manifest_s
     with (destination / "training_config.json").open("w", encoding="utf-8") as handle:
         json.dump(config.to_dict(), handle, indent=2)
         handle.write("\n")
+    training_info = {
+        "global_step": step,
+        "num_training_samples": num_training_samples,
+        "num_training_batches": num_training_batches,
+        "num_val_samples": 0,
+        "world_size": world_size,
+        "effective_batch_size": config.global_batch_size,
+        "per_device_batch_size": config.per_device_batch_size,
+        "gradient_accumulation_steps": config.accumulation_steps(world_size),
+        "current_lr": current_lr,
+        "is_final": is_final,
+    }
+    with (destination / "training_info.json").open("w", encoding="utf-8") as handle:
+        json.dump(training_info, handle, indent=2)
+        handle.write("\n")
     metadata = {
+        **training_info,
         "format": "iqd2rad-lora-v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "arm": config.arm,
@@ -73,9 +136,6 @@ def export_adapter(encoder, config, destination, *, step, world_size, manifest_s
         "base_model": config.base_model,
         "requested_base_revision": config.base_revision,
         "resolved_base_revision": getattr(encoder.model.config, "_commit_hash", None),
-        "global_step": step,
-        "world_size": world_size,
-        "gradient_accumulation_steps": config.accumulation_steps(world_size),
         "training_manifest_sha256": manifest_sha256,
         "training_pairs_include_caption_in_visual_input": config.visual_input_includes_text,
         "optimizer_state_included": False,
@@ -121,11 +181,7 @@ def train(config: TrainConfig):
         if distributed and not dist.is_initialized():
             dist.init_process_group(backend="nccl" if device.type == "cuda" else "gloo")
             initialized_here = True
-        # All ranks must start with the same LoRA initialization.
-        random.seed(config.seed)
-        torch.manual_seed(config.seed)
-        if device.type == "cuda":
-            torch.cuda.manual_seed_all(config.seed)
+        _seed_training(config.seed, rank)
         destination = Path(config.output_dir).expanduser().resolve()
         if destination.exists() and any(destination.iterdir()):
             raise FileExistsError(f"Output directory is not empty: {destination}. Choose a new output_dir.")
@@ -134,15 +190,7 @@ def train(config: TrainConfig):
         if distributed:
             dist.barrier()
         dataset = ManifestDataset(config.manifest, config.data_root, config.modality, config.max_frames)
-        sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank,
-                                     shuffle=True, seed=config.seed, drop_last=True) if distributed else None
-        generator = torch.Generator().manual_seed(config.seed)
-        loader = DataLoader(dataset, batch_size=config.per_device_batch_size,
-                            shuffle=sampler is None, sampler=sampler, drop_last=True,
-                            num_workers=config.num_workers, collate_fn=collate_pairs,
-                            generator=generator, persistent_workers=config.num_workers > 0)
-        if not len(loader):
-            raise ValueError("Manifest is too small for one full per-device microbatch on every rank")
+        loader, sampler = _training_loader(dataset, config, world_size, rank)
         dtype = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}[config.precision]
         encoder = QwenEncoder(
             config.base_model, revision=config.base_revision, device=str(device), torch_dtype=dtype,
@@ -158,19 +206,17 @@ def train(config: TrainConfig):
         encoder.model.peft_config["default"].base_model_name_or_path = config.base_model
         if config.gradient_checkpointing:
             encoder.model.enable_input_require_grads()
-            encoder.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            encoder.model.gradient_checkpointing_enable()
         encoder.model.config.use_cache = False
         pair_model = PairEncoder(encoder, config.visual_input_includes_text).to(device)
         pair_model.train()
         if distributed:
             pair_model = DistributedDataParallel(
                 pair_model, device_ids=[device.index] if device.type == "cuda" else None,
-                find_unused_parameters=True,
+                find_unused_parameters=False,
             )
-        # Rank-specific dropout; parameter initialization above remains shared.
-        torch.manual_seed(config.seed + rank)
-        if device.type == "cuda":
-            torch.cuda.manual_seed_all(config.seed + rank)
+            if config.gradient_checkpointing:
+                pair_model._set_static_graph()
         criterion = RankingDistillLoss(
             arm=config.arm, temperature=config.temperature,
             distill_temperature=config.distill_temperature, distill_weight=config.distill_weight,
@@ -186,7 +232,6 @@ def train(config: TrainConfig):
         scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer, lambda step: _lr_multiplier(step, config.warmup_steps, config.max_steps),
         )
-        scaler = torch.amp.GradScaler("cuda", enabled=config.precision == "fp16" and device.type == "cuda")
         if rank == 0 and config.wandb_project:
             try:
                 import wandb
@@ -217,46 +262,47 @@ def train(config: TrainConfig):
                     iterator = iter(loader)
                     batch = next(iterator)
                 sync = micro == accumulation - 1
-                sync_context = pair_model.no_sync() if distributed and not sync else nullcontext()
+                sync_context = (pair_model.no_sync() if distributed and not sync and not config.gradient_checkpointing
+                                else nullcontext())
                 with sync_context:
-                    with torch.autocast(device_type=device.type, dtype=dtype, enabled=config.precision != "fp32"):
-                        visual, text = pair_model(batch)
-                        scale = min(1.0, (step + 1) / config.distill_warmup_steps) if config.distill_warmup_steps else 1.0
-                        metrics = criterion(visual, text, distill_scale=scale)
-                        loss = metrics["loss"] / accumulation
+                    # The reference runs use the loaded backbone dtype directly;
+                    # autocast would promote loss operations and change BF16 results.
+                    visual, text = pair_model(batch)
+                    scale = min(1.0, (step + 1) / config.distill_warmup_steps) if config.distill_warmup_steps else 1.0
+                    metrics = criterion(visual, text, distill_scale=scale)
+                    loss = metrics["loss"] / accumulation
                     if not torch.isfinite(loss):
                         raise FloatingPointError(f"Non-finite loss at optimizer step {step + 1}")
-                    scaler.scale(loss).backward()
+                    loss.backward()
                 for key, value in metrics.items():
                     totals[key] = totals.get(key, 0.0) + float(value.detach()) / accumulation
-            scaler.unscale_(optimizer)
             grad_norm = torch.nn.utils.clip_grad_norm_(parameters, config.gradient_clip)
-            if not torch.isfinite(grad_norm) and not scaler.is_enabled():
+            if not torch.isfinite(grad_norm):
                 raise FloatingPointError(f"Non-finite gradient norm at optimizer step {step + 1}")
-            previous_scale = scaler.get_scale()
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
-            if scaler.is_enabled() and scaler.get_scale() < previous_scale:
-                if rank == 0:
-                    print(json.dumps({"event": "fp16_overflow", "step": step + 1}), flush=True)
-                continue
+            optimizer.step()
             scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
             step += 1
-            if rank == 0 and (step == 1 or step % config.log_every == 0):
-                totals.update(step=step, epoch=epoch, lr=scheduler.get_last_lr()[0], grad_norm=float(grad_norm))
-                print(json.dumps(totals), flush=True)
+            if rank == 0:
                 if run is not None:
-                    run.log(totals, step=step)
-            if config.save_every and step % config.save_every == 0 and step < config.max_steps:
+                    run.log(_wandb_metrics(totals, config, step, scheduler.get_last_lr()[0]), step=step)
+                if (step - 1) % config.log_every == 0:
+                    logged = dict(totals, step=step, epoch=epoch, lr=scheduler.get_last_lr()[0],
+                                  grad_norm=float(grad_norm))
+                    print(json.dumps(logged), flush=True)
+            if _periodic_checkpoint(step, config.save_every):
                 if rank == 0:
                     export_adapter(encoder, config, destination / f"checkpoint-{step}", step=step,
-                                   world_size=world_size, manifest_sha256=manifest_sha256)
+                                   world_size=world_size, manifest_sha256=manifest_sha256,
+                                   num_training_samples=len(dataset), num_training_batches=len(loader),
+                                   current_lr=scheduler.get_last_lr()[0])
                 if distributed:
                     dist.barrier()
         if rank == 0:
             export_adapter(encoder, config, destination / "final", step=step,
-                           world_size=world_size, manifest_sha256=manifest_sha256)
+                           world_size=world_size, manifest_sha256=manifest_sha256,
+                           num_training_samples=len(dataset), num_training_batches=len(loader),
+                           current_lr=scheduler.get_last_lr()[0], is_final=True)
             print(json.dumps({"event": "training_complete", "output": str(destination / "final")}), flush=True)
         if distributed:
             dist.barrier()

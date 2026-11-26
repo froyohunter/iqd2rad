@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import numpy as np
+
 
 def extract_frames(video, output_dir, num_frames=64):
     """Sample uniformly spaced decoded frame indices, including both endpoints.
@@ -33,8 +35,7 @@ def extract_frames(video, output_dir, num_frames=64):
     if count < 1:
         raise ValueError("Video has no decodable frames")
     take = min(num_frames, count)
-    indices = [int(index * (count - 1) / (take - 1)) for index in range(take)] \
-        if take > 1 else [0]
+    indices = np.linspace(0, count - 1, take, dtype=int)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".frames-", dir=output.parent) as temporary:
         staging = Path(temporary)

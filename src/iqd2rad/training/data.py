@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import numpy as np
+
 
 class ManifestDataset:
     """A map-style dataset without requiring torch merely to inspect a manifest."""
@@ -65,12 +67,8 @@ class ManifestDataset:
         else:
             frames = source["frames"]
             if len(frames) > self.max_frames:
-                if self.max_frames == 1:
-                    frames = [frames[0]]
-                else:
-                    # Integer linspace, as in the original frame sampler.
-                    frames = [frames[int(i * (len(frames) - 1) / (self.max_frames - 1))]
-                              for i in range(self.max_frames)]
+                positions = np.linspace(0, len(frames) - 1, self.max_frames, dtype=int)
+                frames = [frames[index] for index in positions]
             result["video"] = [self._path(path) for path in frames]
         return result
 

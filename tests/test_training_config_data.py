@@ -45,6 +45,25 @@ def test_manifest_rejects_ambiguous_modality(tmp_path):
         ManifestDataset(manifest)
 
 
+@pytest.mark.parametrize("count,positions", [
+    (154, {21: 50, 42: 101, 49: 118}),
+    (162, {45: 114}),
+    (178, {21: 58, 42: 117}),
+])
+def test_frame_sampling_preserves_numpy_linspace_rounding(tmp_path, count, positions):
+    paths = [f"{i:04d}.jpg" for i in range(count)]
+    for path in paths:
+        (tmp_path / path).touch()
+    manifest = tmp_path / "pairs.jsonl"
+    manifest.write_text(json.dumps({"id": "clip", "text": "caption", "frames": paths}))
+    selected = ManifestDataset(manifest, tmp_path, max_frames=64)[0]["video"]
+    assert len(selected) == 64
+    assert selected[0] == str(tmp_path / paths[0])
+    assert selected[-1] == str(tmp_path / paths[-1])
+    for output_index, source_index in positions.items():
+        assert selected[output_index] == str(tmp_path / paths[source_index])
+
+
 def test_configs_are_the_main_protocol():
     from pathlib import Path
     configs = sorted(path for path in (Path(__file__).resolve().parents[1] / "configs" / "qwen").glob("*.json")

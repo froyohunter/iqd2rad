@@ -71,6 +71,9 @@ def main():
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device")
     parser.add_argument("--dtype", choices=["float32", "bfloat16", "float16"])
+    parser.add_argument("--attn-implementation", choices=["flash_attention_2", "sdpa"],
+                        default="flash_attention_2",
+                        help="Reference CUDA backend; select sdpa explicitly for CPU encoding")
     parser.add_argument("--max-frames", type=int, default=64)
     parser.add_argument("--max-length", type=int, default=8192)
     parser.add_argument("--local-files-only", action="store_true")
@@ -92,6 +95,7 @@ def main():
         args.base_model, revision=args.revision, adapter=args.adapter,
         adapter_revision=args.adapter_revision, processor_source=args.processor_source,
         device=args.device, torch_dtype=args.dtype, max_frames=args.max_frames,
+        attn_implementation=args.attn_implementation,
         max_length=args.max_length, local_files_only=args.local_files_only,
     )
     # Main retrieval SQ is fitted to raw embedding prefixes. Normalization before
@@ -104,6 +108,11 @@ def main():
     meta = {"base_model": args.base_model, "requested_revision": args.revision,
             "resolved_revision": getattr(encoder.model.config, "_commit_hash", None),
             "adapter": args.adapter, "adapter_revision": args.adapter_revision,
+            "processor_source": encoder.processor_source,
+            "processor_revision": encoder.processor_revision,
+            "processor_source_kind": encoder.processor_source_kind,
+            "attn_implementation": encoder.attn_implementation,
+            "torch_dtype": str(encoder.torch_dtype),
             "num_queries": len(q), "num_candidates": len(c), "dimension": q.shape[1],
             "normalized": False, "max_frames": args.max_frames, "max_length": args.max_length,
             "candidate_captions": False, "format_version": 1}

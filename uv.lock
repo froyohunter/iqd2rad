@@ -380,6 +380,7 @@ dev = [
 train = [
     { name = "accelerate" },
     { name = "av" },
+    { name = "huggingface-hub" },
     { name = "peft" },
     { name = "pillow" },
     { name = "qwen-vl-utils" },
@@ -396,9 +397,10 @@ wandb = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'train'", specifier = ">=1.0,<2" },
     { name = "av", marker = "extra == 'train'", specifier = ">=14,<17" },
+    { name = "huggingface-hub", marker = "extra == 'train'", specifier = "==0.36.2" },
     { name = "matplotlib", marker = "extra == 'analysis'", specifier = ">=3.8,<4" },
     { name = "numpy", specifier = ">=1.26,<2" },
-    { name = "peft", marker = "extra == 'train'", specifier = "==0.17.1" },
+    { name = "peft", marker = "extra == 'train'", specifier = "==0.19.1" },
     { name = "pillow", marker = "extra == 'train'", specifier = ">=10,<12" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9" },
     { name = "qwen-vl-utils", marker = "extra == 'train'", specifier = "==0.0.14" },
@@ -808,7 +810,7 @@ wheels = [
 
 [[package]]
 name = "peft"
-version = "0.17.1"
+version = "0.19.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
@@ -822,9 +824,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/70/b8/2e79377efaa1e5f0d70a497db7914ffd355846e760ffa2f7883ab0f600fb/peft-0.17.1.tar.gz", hash = "sha256:e6002b42517976c290b3b8bbb9829a33dd5d470676b2dec7cb4df8501b77eb9f", size = 568192, upload-time = "2025-08-21T09:25:22.703Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/cf/037f1e3d5186496c05513a6754639e2dab3038a05f384284d49a9bd06a2d/peft-0.19.1.tar.gz", hash = "sha256:0d97542fe96dcdaa20d3b81c06f26f988618f416a73544ab23c3618ccb674a40", size = 763738, upload-time = "2026-04-16T15:46:45.105Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/fe/a2da1627aa9cb6310b6034598363bd26ac301c4a99d21f415b1b2855891e/peft-0.17.1-py3-none-any.whl", hash = "sha256:3d129d64def3d74779c32a080d2567e5f7b674e77d546e3585138216d903f99e", size = 504896, upload-time = "2025-08-21T09:25:18.974Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/b6/f54d676ed93cc2dd2234c3b172ea9c8c3d7d29361e66b1b23dec57a67465/peft-0.19.1-py3-none-any.whl", hash = "sha256:2113f72a81621b5913ef28f9022204c742df111890c5f49d812716a4a301e356", size = 680692, upload-time = "2026-04-16T15:46:42.886Z" },
 ]
 
 [[package]]

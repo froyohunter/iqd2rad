@@ -72,6 +72,36 @@ def last_token_pool(hidden: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return hidden[torch.arange(hidden.shape[0], device=hidden.device), col]
 
 
+def resolve_processor_source(base_source, *, revision=None, adapter_source=None,
+                             adapter_revision=None, processor_source=None,
+                             local_files_only=False):
+    """Prefer the processor exported with an adapter when one is available."""
+    if processor_source:
+        source = resolve_model_source(processor_source)
+        source_revision = (adapter_revision if source == adapter_source else
+                           revision if source == base_source else None)
+        return source, source_revision, "explicit"
+    if adapter_source:
+        if Path(adapter_source).is_dir():
+            available = (Path(adapter_source) / "preprocessor_config.json").is_file()
+        else:
+            from huggingface_hub import hf_hub_download
+            from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError
+
+            try:
+                hf_hub_download(adapter_source, "preprocessor_config.json",
+                                revision=adapter_revision, local_files_only=local_files_only)
+                available = True
+            except LocalEntryNotFoundError:
+                return base_source, revision, "base_adapter_processor_unavailable_offline"
+            except EntryNotFoundError:
+                available = False
+        if available:
+            return adapter_source, adapter_revision, "adapter"
+        return base_source, revision, "base_without_adapter_processor"
+    return base_source, revision, "base"
+
+
 class QwenEncoder:
     def __init__(
         self,
@@ -83,7 +113,7 @@ class QwenEncoder:
         processor_source: str | None = None,
         device: str | torch.device | None = None,
         torch_dtype: str | torch.dtype | None = None,
-        attn_implementation: str = "sdpa",
+        attn_implementation: str = "flash_attention_2",
         local_files_only: bool = False,
         max_length: int = 8192,
         min_pixels: int = 4 * 32 * 32,
@@ -94,10 +124,14 @@ class QwenEncoder:
         default_instruction: str = "Represent the user's input.",
     ):
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        if attn_implementation == "flash_attention_2" and self.device.type != "cuda":
+            raise ValueError("The reference FlashAttention 2 path requires CUDA; "
+                             "select attn_implementation='sdpa' explicitly for CPU encoding")
         if isinstance(torch_dtype, str):
             torch_dtype = getattr(torch, torch_dtype.removeprefix("torch."))
         dtype = torch_dtype or (torch.bfloat16 if self.device.type == "cuda" else torch.float32)
         source = resolve_model_source(base_model)
+        adapter_source = resolve_model_source(adapter) if adapter else None
         self.model = Qwen3VLForEmbedding.from_pretrained(
             source, revision=revision, torch_dtype=dtype,
             attn_implementation=attn_implementation, use_safetensors=True,
@@ -107,19 +141,26 @@ class QwenEncoder:
             from peft import PeftModel
 
             self.model = PeftModel.from_pretrained(
-                self.model, resolve_model_source(adapter), revision=adapter_revision,
+                self.model, adapter_source, revision=adapter_revision,
                 local_files_only=local_files_only,
             )
             self.model = self.model.merge_and_unload()
-        # The upstream processor is the default. An exported processor can be passed
-        # explicitly, avoiding the training_config/model_config filename ambiguity.
-        proc_source = resolve_model_source(processor_source) if processor_source else source
+        proc_source, proc_revision, proc_kind = resolve_processor_source(
+            source, revision=revision, adapter_source=adapter_source,
+            adapter_revision=adapter_revision, processor_source=processor_source,
+            local_files_only=local_files_only,
+        )
         self.processor = Qwen3VLProcessor.from_pretrained(
-            proc_source, revision=None if processor_source else revision,
+            proc_source, revision=proc_revision,
             padding_side="right", local_files_only=local_files_only,
         )
         self.base_model = base_model
         self.revision = revision
+        self.processor_source = proc_source
+        self.processor_revision = proc_revision
+        self.processor_source_kind = proc_kind
+        self.attn_implementation = attn_implementation
+        self.torch_dtype = dtype
         self.max_length = max_length
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
