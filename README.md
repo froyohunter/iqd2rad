@@ -178,4 +178,15 @@ See [LICENSE](LICENSE) and [NOTICE](NOTICE) for the retained upstream attributio
 ## Citation
 
 If you use this implementation, please cite the accompanying paper.
-BibTeX will be added once the final camera-ready citation metadata is available.
+
+```bibtex
+@article{chen2026from,
+  title={From Intrinsic Quantization Difficulty to Ranking-Aware Distillation for Low-Bit Multimodal Retrieval},
+  author={Leiyue Chen and Hao Chen},
+  journal={Transactions on Machine Learning Research},
+  issn={2835-8856},
+  year={2026},
+  url={https://openreview.net/forum?id=4h8YJsubM1},
+  note={}
+}
+```
