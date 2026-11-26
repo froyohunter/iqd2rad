@@ -18,6 +18,7 @@ class TrainConfig:
     max_steps: int = 3001
     per_device_batch_size: int = 8
     global_batch_size: int = 128
+    # Main experiments use 1e-5; alternative rates such as 1e-4 are exploratory settings.
     learning_rate: float = 1e-5
     weight_decay: float = 0.01
     warmup_steps: int = 300
